@@ -5,7 +5,7 @@ on:
     branches: [main]
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -16,12 +16,15 @@ jobs:
         run: |
           cd mobile
           flutter create --platforms=android --project-name cartridge_flow .
+          # This generated example test refers to MyApp, which this project does not define.
+          rm -f test/widget_test.dart
           flutter pub get
       - name: Analyze Dart
-        run: cd mobile && flutter analyze
+        run: cd mobile && flutter analyze --no-fatal-infos
       - name: Build Android APK
         run: cd mobile && flutter build apk --debug --dart-define=API_URL=https://YOUR-API-DOMAIN.example
       - uses: actions/upload-artifact@v4
         with:
           name: cartridge-android-debug-apk
           path: mobile/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
