@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cartridge
+      POSTGRES_USER: cartridge
+      POSTGRES_PASSWORD: cartridge_dev_password
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cartridge -d cartridge"]
+      interval: 5s
+      retries: 10
+volumes:
+  postgres_data:

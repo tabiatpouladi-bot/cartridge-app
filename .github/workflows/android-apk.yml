@@ -1,0 +1,27 @@
+name: Android debug APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate Android project
+        run: |
+          cd mobile
+          flutter create --platforms=android --project-name cartridge_flow .
+          flutter pub get
+      - name: Analyze Dart
+        run: cd mobile && flutter analyze
+      - name: Build Android APK
+        run: cd mobile && flutter build apk --debug --dart-define=API_URL=https://YOUR-API-DOMAIN.example
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cartridge-android-debug-apk
+          path: mobile/build/app/outputs/flutter-apk/app-debug.apk
