@@ -8,7 +8,52 @@ const ink = Color(0xff1c2843), blue = Color(0xff395fd6), canvas = Color(0xfff5f7
 class Api {
   static String base = const String.fromEnvironment('API_URL', defaultValue: 'http://10.0.2.2:4100');
   static String token = '';
+  static bool demo = false;
+  static final List<Map<String,dynamic>> demoMissions = [
+    {'id':101,'model':'HP 85A','customer_name':'شرکت پارس','customer_org_id':1,'requested_qty':50,'collected_qty':48,'delivered_qty':0,'status':'supplier','service_type':'charge','warranty':'عادی','source_address':'تهران، سعادت آباد'},
+    {'id':102,'model':'Canon 725','customer_name':'شرکت سپهر','customer_org_id':2,'requested_qty':20,'collected_qty':null,'delivered_qty':0,'status':'pending','service_type':'repair','warranty':'عادی','source_address':'تهران، ونک'},
+    {'id':103,'model':'HP 26A','customer_name':'شرکت پارس','customer_org_id':1,'requested_qty':12,'collected_qty':12,'delivered_qty':12,'status':'completed','service_type':'charge','warranty':'عادی','source_address':'تهران، سعادت آباد'},
+  ];
+  static final Map<int,List<Map<String,dynamic>>> demoBatches = {};
+  static final Map<int,List<Map<String,dynamic>>> demoEvents = {};
+  static int nextMission = 104;
+  static int nextBatch = 1;
+  static dynamic demoRequest(String method, String path, Map<String,dynamic>? data) {
+    if(path == '/organizations') return [{'id':1,'name':'شرکت پارس'},{'id':2,'name':'شرکت سپهر'}];
+    if(path == '/missions' && method == 'GET') return demoMissions;
+    if(path == '/missions' && method == 'POST') {final m=<String,dynamic>{'id':nextMission++,'customer_name':data?['customer_org_id']==2?'شرکت سپهر':'شرکت پارس','status':'pending','collected_qty':null,'delivered_qty':0,...?data};demoMissions.insert(0,m);return m;}
+    final segments=path.split('/').where((s)=>s.isNotEmpty).toList();
+    if(segments.length>=2 && segments[0]=='missions') {
+      final id=int.tryParse(segments[1]);
+      final matches=demoMissions.where((m)=>m['id']==id);
+      if(matches.isEmpty)throw Exception('مأموریت یافت نشد');
+      final m=matches.first;
+      if(method=='GET') return {'mission':m,'batches':demoBatches[id]??[],'events':demoEvents[id]??[]};
+      if(segments.length>2) { final action=segments[2];
+        if(action=='approve')m['status']='approved';
+        if(action=='reject')m['status']='rejected';
+        if(action=='assign')m['status']='pickup';
+        if(action=='collect'){m['collected_qty']=data?['qty'];m['status']='supplier';}
+        if(action=='complete')m['status']='completed';
+        if(action=='cancel')m['status']='cancelled';
+        if(action=='discrepancy-resolution')m['discrepancy_resolution']=data?['reason'];
+        if(action=='batches') {final b=<String,dynamic>{'id':nextBatch++,'qty':(data?['normal_qty']??0)+(data?['warranty_qty']??0)+(data?['irreparable_qty']??0),'normal_qty':data?['normal_qty']??0,'warranty_qty':data?['warranty_qty']??0,'irreparable_qty':data?['irreparable_qty']??0,'customer_invoice_amount':data?['customer_invoice_amount']??0,'paid_amount':0,'status':'financial','supplier_invoice_approved':false,'customer_invoice_issued':false};demoBatches.putIfAbsent(id!,()=>[]).add(b);m['status']='financial';}
+        demoEvents.putIfAbsent(id!,()=>[]).insert(0,{'label':'عملیات آزمایشی: $action','actor_name':'کاربر نمونه','details':'بدون ذخیره روی سرور'});
+        return {'ok':true};
+      }
+    }
+    if(segments.length==3&&segments[0]=='batches'){
+      final bid=int.tryParse(segments[1]);
+      final bs=demoBatches.values.expand((e)=>e).where((b)=>b['id']==bid);
+      if(bs.isEmpty)throw Exception('بسته یافت نشد');final b=bs.first;
+      if(segments[2]=='finance'){b.addAll(data??{});final paid=((b['paid_amount'] as num?) ?? 0);final amount=((b['customer_invoice_amount'] as num?) ?? 0);b['status']=b['supplier_invoice_approved']==true&&b['customer_invoice_issued']==true&&paid>=amount?'cleared':'financial';}
+      if(segments[2]=='status')b['status']=data?['status'];
+      return {'ok':true};
+    }
+    throw Exception('عملیات آزمایشی پشتیبانی نمی‌شود');
+  }
   static Future<dynamic> request(String method,String path,[Map<String,dynamic>? data]) async {
+    if (demo) return demoRequest(method,path,data);
     final uri=Uri.parse('$base/api$path');
     final headers={'Content-Type':'application/json',if(token.isNotEmpty)'Authorization':'Bearer $token'};
     final request = http.Request(method, uri);
@@ -33,13 +78,13 @@ class _EntryState extends State<Entry> {
   @override void initState(){super.initState();_restore();}
   Future<void> _restore() async { final p=await SharedPreferences.getInstance(); Api.base=p.getString('api_base')??Api.base;Api.token=p.getString('token')??'';if(Api.token.isNotEmpty){try{user=Map<String,dynamic>.from(await Api.request('GET','/me'));}catch(_){Api.token='';await p.remove('token');}}if(mounted)setState(()=>loading=false); }
   Future<void> login(Map<String,dynamic> u,String t) async {final p=await SharedPreferences.getInstance();await p.setString('token',t);Api.token=t;setState(()=>user=u);}
-  Future<void> logout() async {final p=await SharedPreferences.getInstance();await p.remove('token');Api.token='';setState(()=>user=null);}
+  Future<void> logout() async {Api.demo=false;final p=await SharedPreferences.getInstance();await p.remove('token');Api.token='';setState(()=>user=null);}
   @override Widget build(BuildContext context)=>loading?const Scaffold(body:Center(child:CircularProgressIndicator())):user==null?Login(onLogin:login):Home(user:user!,onLogout:logout);
 }
 class Login extends StatefulWidget {final Future<void> Function(Map<String,dynamic>,String) onLogin;const Login({super.key,required this.onLogin});@override State<Login> createState()=>_LoginState();}
 class _LoginState extends State<Login> {final name=TextEditingController(),pass=TextEditingController(),server=TextEditingController(text:Api.base);bool busy=false,hide=true;
   Future<void> submit() async {if(name.text.trim().isEmpty||pass.text.isEmpty)return toast(context,'نام کاربری و رمز عبور را وارد کنید');setState(()=>busy=true);try{Api.base=server.text.trim().replaceAll(RegExp(r'/$'),'');final p=await SharedPreferences.getInstance();await p.setString('api_base',Api.base);final v=Map<String,dynamic>.from(await Api.request('POST','/login',{'username':name.text.trim(),'password':pass.text}));await widget.onLogin(Map<String,dynamic>.from(v['user']),v['token'].toString());}catch(e){if(mounted)toast(context,clean(e));}finally{if(mounted)setState(()=>busy=false);}}
-  @override Widget build(BuildContext context)=>Scaffold(body:SafeArea(child:Center(child:SingleChildScrollView(padding:const EdgeInsets.all(24),child:ConstrainedBox(constraints:const BoxConstraints(maxWidth:430),child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[const SizedBox(height:24),Center(child:Container(width:84,height:84,decoration:BoxDecoration(gradient:const LinearGradient(colors:[blue,Color(0xff7d9cff)]),borderRadius:BorderRadius.circular(25)),child:const Icon(Icons.print_rounded,size:43,color:Colors.white))),const SizedBox(height:24),const Text('مدیریت کارتریج',textAlign:TextAlign.center,style:TextStyle(fontSize:28,fontWeight:FontWeight.w900,color:ink)),const SizedBox(height:6),const Text('مدیریت درخواست، تعمیر و تحویل در یک جا',textAlign:TextAlign.center,style:TextStyle(color:Colors.black54)),const SizedBox(height:38),field(name,'نام کاربری',Icons.person_outline),const SizedBox(height:12),TextField(controller:pass,obscureText:hide,decoration:InputDecoration(labelText:'رمز عبور',prefixIcon:const Icon(Icons.lock_outline),suffixIcon:IconButton(onPressed:()=>setState(()=>hide=!hide),icon:Icon(hide?Icons.visibility_outlined:Icons.visibility_off_outlined)))),const SizedBox(height:12),field(server,'آدرس سرور (HTTPS)',Icons.dns_outlined),const SizedBox(height:20),FilledButton(onPressed:busy?null:submit,style:FilledButton.styleFrom(minimumSize:const Size.fromHeight(54),backgroundColor:blue),child:busy?const CircularProgressIndicator(color:Colors.white):const Text('ورود به سامانه',style:TextStyle(fontSize:16,fontWeight:FontWeight.bold))),const SizedBox(height:16),const Text('برای استفاده واقعی، آدرس HTTPS سرور شرکت را وارد کنید.',textAlign:TextAlign.center,style:TextStyle(color:Colors.black45,fontSize:12))]))))));}
+  @override Widget build(BuildContext context)=>Scaffold(body:SafeArea(child:Center(child:SingleChildScrollView(padding:const EdgeInsets.all(24),child:ConstrainedBox(constraints:const BoxConstraints(maxWidth:430),child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[const SizedBox(height:24),Center(child:Container(width:84,height:84,decoration:BoxDecoration(gradient:const LinearGradient(colors:[blue,Color(0xff7d9cff)]),borderRadius:BorderRadius.circular(25)),child:const Icon(Icons.print_rounded,size:43,color:Colors.white))),const SizedBox(height:24),const Text('مدیریت کارتریج',textAlign:TextAlign.center,style:TextStyle(fontSize:28,fontWeight:FontWeight.w900,color:ink)),const SizedBox(height:6),const Text('مدیریت درخواست، تعمیر و تحویل در یک جا',textAlign:TextAlign.center,style:TextStyle(color:Colors.black54)),const SizedBox(height:38),field(name,'نام کاربری',Icons.person_outline),const SizedBox(height:12),TextField(controller:pass,obscureText:hide,decoration:InputDecoration(labelText:'رمز عبور',prefixIcon:const Icon(Icons.lock_outline),suffixIcon:IconButton(onPressed:()=>setState(()=>hide=!hide),icon:Icon(hide?Icons.visibility_outlined:Icons.visibility_off_outlined)))),const SizedBox(height:12),field(server,'آدرس سرور (HTTPS)',Icons.dns_outlined),const SizedBox(height:20),FilledButton(onPressed:busy?null:submit,style:FilledButton.styleFrom(minimumSize:const Size.fromHeight(54),backgroundColor:blue),child:busy?const CircularProgressIndicator(color:Colors.white):const Text('ورود به سامانه',style:TextStyle(fontSize:16,fontWeight:FontWeight.bold))),const SizedBox(height:14),OutlinedButton.icon(onPressed:(){showModalBottomSheet(context:context,showDragHandle:true,builder:(c)=>SafeArea(child:Padding(padding:const EdgeInsets.all(20),child:Column(mainAxisSize:MainAxisSize.min,children:[const Text('انتخاب نقش آزمایشی',style:TextStyle(fontWeight:FontWeight.bold,fontSize:20)),const SizedBox(height:10),...titles.entries.map((role)=>ListTile(title:Text(role.value),leading:const Icon(Icons.person_outline),onTap:(){Navigator.pop(c);Api.demo=true;widget.onLogin({'name':'کاربر نمایشی','role':role.key},'');})),const SizedBox(height:6)]))));},icon:const Icon(Icons.visibility_outlined),label:const Text('ورود آزمایشی بدون سرور'),style:OutlinedButton.styleFrom(minimumSize:const Size.fromHeight(52))),const SizedBox(height:10),const Text('حالت نمایشی: اطلاعات روی سرور ذخیره نمی‌شود.',textAlign:TextAlign.center,style:TextStyle(color:Colors.black45,fontSize:12)),const SizedBox(height:16),const Text('برای استفاده واقعی، آدرس HTTPS سرور شرکت را وارد کنید.',textAlign:TextAlign.center,style:TextStyle(color:Colors.black45,fontSize:12))]))))));}
 String clean(Object e)=>e.toString().replaceFirst('Exception: ','');
 void toast(BuildContext c,String s){ScaffoldMessenger.of(c).showSnackBar(SnackBar(content:Text(s),behavior:SnackBarBehavior.floating));}
 Widget field(TextEditingController c,String label,IconData icon,{TextInputType? keyboard})=>TextField(controller:c,keyboardType:keyboard,decoration:InputDecoration(labelText:label,prefixIcon:Icon(icon)));
